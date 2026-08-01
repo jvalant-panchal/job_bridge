@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache & build files
+__pycache__/
+*.pyc
+*.pyo
+
+# Local database & logs
+*.db
+*.sqlite3
+*.log
+
+# Debug screenshots
+*.png
