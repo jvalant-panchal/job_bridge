@@ -14,10 +14,9 @@ def scrape_ojas_live_advertisements():
     print("==================================================\n")
     
     with sync_playwright() as p:
-        # headless=True runs Chrome invisibly in the background
         browser = p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -26,8 +25,9 @@ def scrape_ojas_live_advertisements():
         page = context.new_page()
         
         print("1. Establishing session on OJAS Homepage...")
-        page.goto("https://ojas.gujarat.gov.in/", wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(2000)
+        # Changed to domcontentloaded to prevent networkidle timeout on cloud servers
+        page.goto("https://ojas.gujarat.gov.in/", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
         
         print("2. Navigating to Advertisement List...")
         try:
@@ -39,23 +39,22 @@ def scrape_ojas_live_advertisements():
             if advt_link.count() > 0:
                 advt_link.click(force=True)
             else:
-                page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="networkidle")
+                page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="domcontentloaded", timeout=60000)
                 
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("domcontentloaded")
             page.wait_for_timeout(3000)
         except Exception as err:
             print(f"⚠️ Navigation fallback: {err}")
-            page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="networkidle")
+            page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="domcontentloaded", timeout=60000)
 
         select_locator = page.locator("select[name*='Dept'], select[id*='Dept'], select").first
         
         if select_locator.count() == 0:
-            print("❌ Department dropdown not found. Saving debug screenshot...")
-            page.screenshot(path="ojas_error_state.png")
+            print("❌ Department dropdown not found.")
             browser.close()
             return
 
-        print("✅ Department Dropdown Loaded Successfully in Background!\n")
+        print("✅ Department Dropdown Loaded Successfully!\n")
         
         options = select_locator.locator("option").all_inner_texts()
         total_depts = len(options)
