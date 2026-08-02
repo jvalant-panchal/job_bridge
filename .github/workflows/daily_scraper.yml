@@ -1,17 +1,17 @@
-name: Daily OJAS Job Scraper
+name: Daily Government Job Scrapers
 
 on:
   schedule:
-    # Runs daily at 02:30 UTC = 8:00 AM IST
+    # Runs daily at 02:30 UTC (8:00 AM IST)
     - cron: '30 2 * * *'
-  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+  workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Check out repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
       - name: 🐍 Set up Python 3.10
@@ -20,31 +20,38 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: 📦 Install Dependencies
+      - name: 📦 Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🎭 Install Playwright Browsers & Dependencies
+      - name: 🎭 Install Playwright Browsers & System Dependencies
         run: |
-          playwright install chromium
-          playwright install-deps chromium
+          playwright install --with-deps chromium
 
       - name: 🚀 Run OJAS Scraper
+        continue-on-error: true
         run: |
           python scrape_ojas_final.py
 
       - name: 🏛️ Run GPSC Scraper
+        continue-on-error: true
         run: |
           python scrape_gpsc.py
 
       - name: ⚖️ Run High Court OJAS Scraper
+        continue-on-error: true
         run: |
           python scrape_hc_ojas.py
-          
-      - name: 💾 Commit & Push Updated Database
+
+      - name: 🎓 Run GSERC Vidhyasahayak Scraper
+        continue-on-error: true
+        run: |
+          python scrape_gserc.py
+
+      - name: 💾 Commit & Push Updated Database to GitHub
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add -f jobs.db
-          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update jobs.db via GitHub Actions [skip ci]" && git push)
+          git add jobs.db
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update jobs.db via GitHub Actions" && git push origin main)
