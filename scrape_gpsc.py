@@ -1,0 +1,167 @@
+import sys
+import requests
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
+from database import init_db, save_jobs
+
+sys.stdout.reconfigure(encoding='utf-8')
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,gu;q=0.8",
+}
+
+GPSC_URL = "https://gpsc-ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a"
+
+def parse_gpsc_tables(soup, dept_name="GPSC"):
+    """Extract job listings from GPSC advertisement table."""
+    extracted = []
+    tables = soup.find_all('table')
+    
+    for table in tables:
+        rows = table.find_all('tr')
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) >= 2:
+                advt_no = cols[0].text.strip()
+                title = cols[1].text.strip()
+                last_date = cols[2].text.strip() if len(cols) > 2 else "Check Notice"
+                
+                link_tag = row.find('a', href=True)
+                apply_url = "https://gpsc-ojas.gujarat.gov.in"
+                if link_tag:
+                    href = link_tag['href']
+                    apply_url = href if href.startswith('http') else f"https://gpsc-ojas.gujarat.gov.in/{href.lstrip('/')}"
+
+                if title and len(title) > 3 and "Advt" not in advt_no and "ONE TIME" not in title and "OTR" not in title:
+                    extracted.append({
+                        "source": "GPSC",
+                        "advt_no": advt_no,
+                        "title": title,
+                        "department": f"GPSC ({dept_name})" if "GPSC" not in dept_name else dept_name,
+                        "location": "Gujarat",
+                        "last_date": last_date,
+                        "apply_url": apply_url
+                    })
+    return extracted
+
+def scrape_gpsc_http():
+    """Engine 1: HTTP Postback query for GPSC departments."""
+    print("⚡ Engine 1: Querying GPSC WebForms Endpoint via HTTP...")
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    
+    resp = session.get(GPSC_URL, timeout=15)
+    if resp.status_code != 200:
+        raise Exception(f"GPSC HTTP response status {resp.status_code}")
+
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    
+    viewstate = soup.find('input', {'id': '__VIEWSTATE'})
+    eventvalidation = soup.find('input', {'id': '__EVENTVALIDATION'})
+    dept_select = soup.find('select')
+    
+    if not dept_select:
+        raise Exception("Department dropdown not found in GPSC HTML response.")
+
+    options = dept_select.find_all('option')
+    total_opts = len(options)
+    print(f"📋 Found {total_opts} department options in GPSC dropdown.\n")
+    
+    all_jobs = []
+
+    for idx, opt in enumerate(options):
+        dept_val = opt.get('value', '')
+        dept_name = opt.text.strip()
+        
+        if not dept_val or "Select" in dept_name or "---" in dept_name:
+            continue
+
+        print(f"[{idx}/{total_opts-1}] Querying GPSC Category: {dept_name}...")
+        
+        form_data = {
+            '__VIEWSTATE': viewstate['value'] if viewstate else '',
+            '__EVENTVALIDATION': eventvalidation['value'] if eventvalidation else '',
+            '__EVENTTARGET': dept_select.get('name', 'ddlDept'),
+            dept_select.get('name', 'ddlDept'): dept_val
+        }
+        
+        try:
+            post_resp = session.post(GPSC_URL, data=form_data, timeout=10)
+            if post_resp.status_code == 200:
+                post_soup = BeautifulSoup(post_resp.text, 'html.parser')
+                dept_jobs = parse_gpsc_tables(post_soup, dept_name)
+                all_jobs.extend(dept_jobs)
+                print(f"   └── Found {len(dept_jobs)} vacancy(ies)")
+        except Exception as e:
+            print(f"   ⚠️ Category query skipped: {e}")
+
+    return all_jobs
+
+def scrape_gpsc_playwright():
+    """Engine 2: Playwright fallback for GPSC."""
+    print("\n🎭 Engine 2: Fallback to Headless Playwright Browser for GPSC...")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        context = browser.new_context(user_agent=HEADERS["User-Agent"])
+        page = context.new_page()
+        
+        page.goto(GPSC_URL, wait_until="commit", timeout=30000)
+        page.wait_for_timeout(3000)
+        
+        select_locator = page.locator("select[name*='Dept'], select[id*='Dept'], select").first
+        if select_locator.count() == 0:
+            browser.close()
+            return []
+
+        options = select_locator.locator("option").all_inner_texts()
+        scraped_jobs = []
+
+        for idx in range(1, len(options)):
+            dept_name = options[idx].strip()
+            if not dept_name or "Select" in dept_name or "---" in dept_name:
+                continue
+                
+            try:
+                select_locator.select_option(index=idx)
+                page.wait_for_timeout(2500)
+                soup = BeautifulSoup(page.content(), 'html.parser')
+                dept_jobs = parse_gpsc_tables(soup, dept_name)
+                scraped_jobs.extend(dept_jobs)
+            except Exception:
+                continue
+
+        browser.close()
+        return scraped_jobs
+
+def scrape_gpsc_live_advertisements():
+    init_db()
+    
+    print("==================================================")
+    print("🏛️ GPSC SILENT BACKGROUND SCRAPER")
+    print("==================================================\n")
+    
+    scraped_jobs = []
+    
+    try:
+        scraped_jobs = scrape_gpsc_http()
+    except Exception as err:
+        print(f"⚠️ Engine 1 Notice: {err}. Switching to Engine 2...")
+        try:
+            scraped_jobs = scrape_gpsc_playwright()
+        except Exception as pw_err:
+            print(f"❌ Engine 2 Failure: {pw_err}")
+
+    print("\n==================================================")
+    print(f"✅ SUCCESS: Extracted {len(scraped_jobs)} live GPSC advertisements!")
+    print("==================================================\n")
+
+    if scraped_jobs:
+        save_jobs(scraped_jobs)
+
+if __name__ == "__main__":
+    scrape_gpsc_live_advertisements()
