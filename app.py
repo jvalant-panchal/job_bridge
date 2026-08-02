@@ -86,11 +86,13 @@ with tab_jobs:
             filtered_df["department"].str.contains(search_query, case=False, na=False)
         ]
         
-    # Metrics Summary
-    m1, m2, m3 = st.columns(3)
+    # Metrics Summary across all 4 sources
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total Active Jobs", len(df))
-    m2.metric("OJAS Listings", len(df[df["source"] == "OJAS"]) if not df.empty else 0)
-    m3.metric("GPSC Listings", len(df[df["source"] == "GPSC"]) if not df.empty else 0)
+    m2.metric("OJAS State", len(df[df["source"] == "OJAS"]) if not df.empty else 0)
+    m3.metric("GPSC Officers", len(df[df["source"] == "GPSC"]) if not df.empty else 0)
+    m4.metric("High Court", len(df[df["source"] == "HC-OJAS"]) if not df.empty else 0)
+    m5.metric("GSERC Teaching", len(df[df["source"] == "GSERC"]) if not df.empty else 0)
     
     st.divider()
     
