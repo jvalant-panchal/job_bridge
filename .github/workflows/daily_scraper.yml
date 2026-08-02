@@ -34,6 +34,14 @@ jobs:
         run: |
           python scrape_ojas_final.py
 
+      - name: 🏛️ Run GPSC Scraper
+        run: |
+          python scrape_gpsc.py
+
+      - name: ⚖️ Run High Court OJAS Scraper
+        run: |
+          python scrape_hc_ojas.py
+          
       - name: 💾 Commit & Push Updated Database
         run: |
           git config --global user.name "GitHub Action Bot"
