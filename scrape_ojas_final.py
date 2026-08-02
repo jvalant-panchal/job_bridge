@@ -16,41 +16,53 @@ def scrape_ojas_live_advertisements():
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ]
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
+            viewport={"width": 1280, "height": 800},
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9,gu;q=0.8"
+            }
         )
         page = context.new_page()
         
-        print("1. Establishing session on OJAS Homepage...")
-        # Changed to domcontentloaded to prevent networkidle timeout on cloud servers
-        page.goto("https://ojas.gujarat.gov.in/", wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(3000)
+        # Step 1: Establish Session via AdvtList directly or Homepage
+        print("1. Connecting to OJAS portal...")
+        target_url = "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a"
         
-        print("2. Navigating to Advertisement List...")
         try:
-            online_app_menu = page.locator("text=Online Application").first
-            online_app_menu.hover()
-            page.wait_for_timeout(800)
-            
-            advt_link = page.locator("a[href*='AdvtList']").first
-            if advt_link.count() > 0:
-                advt_link.click(force=True)
-            else:
-                page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="domcontentloaded", timeout=60000)
-                
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(3000)
-        except Exception as err:
-            print(f"⚠️ Navigation fallback: {err}")
-            page.goto("https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", wait_until="domcontentloaded", timeout=60000)
+            # 'commit' returns instantly as soon as HTTP response headers arrive
+            page.goto(target_url, wait_until="commit", timeout=30000)
+            page.wait_for_timeout(4000)
+        except Exception as e:
+            print(f"⚠️ Direct load notice: {e}. Retrying homepage session...")
+            try:
+                page.goto("https://ojas.gujarat.gov.in/", wait_until="commit", timeout=30000)
+                page.wait_for_timeout(3000)
+                page.goto(target_url, wait_until="commit", timeout=30000)
+                page.wait_for_timeout(3000)
+            except Exception as retry_err:
+                print(f"❌ Could not connect to OJAS server: {retry_err}")
+                browser.close()
+                return
+
+        # Step 2: Locate Department Dropdown with retry
+        print("2. Locating Department Dropdown...")
+        try:
+            page.wait_for_selector("select[name*='Dept'], select[id*='Dept'], select", timeout=15000)
+        except Exception:
+            print("⚠️ Dropdown selector wait timed out. Checking current page content...")
 
         select_locator = page.locator("select[name*='Dept'], select[id*='Dept'], select").first
         
         if select_locator.count() == 0:
-            print("❌ Department dropdown not found.")
+            print("❌ Department dropdown not found. OJAS portal may be down or blocking automated requests.")
             browser.close()
             return
 
@@ -113,7 +125,7 @@ def scrape_ojas_live_advertisements():
         browser.close()
 
         print("\n==================================================")
-        print(f"✅ SUCCESS: Saved {len(scraped_jobs)} live OJAS advertisements to jobs.db!")
+        print(f"✅ SUCCESS: Extracted {len(scraped_jobs)} live OJAS advertisements!")
         print("==================================================\n")
 
         if scraped_jobs:
