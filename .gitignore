@@ -8,9 +8,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Local database & logs
-*.db
-*.sqlite3
+# logs
 *.log
 
 # Debug screenshots

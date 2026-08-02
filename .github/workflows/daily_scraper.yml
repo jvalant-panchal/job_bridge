@@ -2,9 +2,9 @@ name: Daily OJAS Job Scraper
 
 on:
   schedule:
-    # Runs every day at 02:30 UTC = 8:00 AM Indian Standard Time (IST)
+    # Runs daily at 02:30 UTC = 8:00 AM IST
     - cron: '30 2 * * *'
-  workflow_dispatch: # Allows manual trigger anytime from the GitHub Actions tab
+  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
 
 jobs:
   scrape-and-update:
@@ -38,5 +38,5 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add jobs.db
+          git add -f jobs.db
           git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update jobs.db via GitHub Actions [skip ci]" && git push)
