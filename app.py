@@ -1,204 +1,213 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-import urllib.parse
-import os
-import subprocess
-import sys
+import sqlite3
+from database import get_db_connection, save_jobs
 
-# ------------------------------------------------------------------
-# PAGE CONFIGURATION
-# ------------------------------------------------------------------
+# Streamlit Page Configuration
 st.set_page_config(
     page_title="Gujarat Job Bridge",
-    page_icon="💼",
-    layout="wide"
+    page_icon="🌉",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-DB_PATH = "jobs.db"
+# Custom Styling for Sleek Professional Look
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #f8f9fa;
+    }
+    .metric-card {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        border: 1px solid #e9ecef;
+    }
+    .portal-card {
+        background-color: #ffffff;
+        border-radius: 8px;
+        padding: 20px;
+        border-left: 5px solid #1e88e5;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        margin-bottom: 15px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# ------------------------------------------------------------------
-# DATABASE HELPER FUNCTIONS
-# ------------------------------------------------------------------
-def fetch_jobs_df(search_query="", source_filter="All"):
+# ---------------------------------------------------------
+# DATABASE UTILITIES
+# ---------------------------------------------------------
+def load_jobs_df():
+    """Fetch all saved jobs from SQLite database."""
+    conn = get_db_connection()
     try:
-        conn = sqlite3.connect(DB_PATH)
-        query = "SELECT id, source, advt_no, title, department, location, last_date, apply_url FROM jobs WHERE 1=1"
-        params = []
-        
-        if search_query:
-            query += " AND (title LIKE ? OR department LIKE ? OR location LIKE ?)"
-            wildcard = f"%{search_query}%"
-            params.extend([wildcard, wildcard, wildcard])
-            
-        if source_filter != "All":
-            query += " AND source = ?"
-            params.append(source_filter)
-            
-        query += " ORDER BY id DESC"
-        
-        df = pd.read_sql_query(query, conn, params=params)
+        df = pd.read_sql_query("SELECT * FROM jobs ORDER BY id DESC", conn)
+    except Exception:
+        df = pd.DataFrame(columns=["id", "source", "advt_no", "title", "department", "location", "last_date", "apply_url"])
+    finally:
         conn.close()
-        return df
-    except Exception as e:
-        st.error(f"Database read error: {e}")
-        return pd.DataFrame()
+    return df
 
-def insert_private_job(title, company, location, last_date, apply_url, advt_no="LOCAL-WALKIN"):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO jobs (source, advt_no, title, department, location, last_date, apply_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, ("Private", advt_no, title, company, location, last_date, apply_url))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        st.error(f"Database write error: {e}")
-        return False
+# ---------------------------------------------------------
+# NAVIGATION & HEADER
+# ---------------------------------------------------------
+st.title("🌉 Gujarat Job Bridge")
+st.caption("Centralized Government & Private Opportunities Across Gujarat")
 
-# ------------------------------------------------------------------
-# SIDEBAR CONTROL PANEL (SYNC BUTTON)
-# ------------------------------------------------------------------
-st.sidebar.title("⚙️ Control Panel")
-st.sidebar.caption("Single-window government recruitment tracker")
-
-st.sidebar.subheader("Live OJAS Sync")
-st.sidebar.write("Pull active advertisements across departments directly from OJAS.")
-
-if st.sidebar.button("🔄 Sync Latest OJAS Jobs", use_container_width=True, type="primary"):
-    with st.sidebar.spinner("📡 Connecting to OJAS & updating listings..."):
-        try:
-            process = subprocess.run(
-                [sys.executable, "scrape_ojas_final.py"],
-                capture_output=True,
-                text=True
-            )
-            
-            if process.returncode == 0:
-                st.sidebar.success("✅ OJAS jobs updated successfully!")
-                st.rerun()
-            else:
-                st.sidebar.error("⚠️ Sync completed with warnings.")
-                if process.stderr:
-                    st.sidebar.caption(f"Log output: {process.stderr[:150]}...")
-        except Exception as e:
-            st.sidebar.error(f"❌ Failed to run scraper: {e}")
-
-st.sidebar.divider()
-st.sidebar.info("💡 **Tip:** Scraped OJAS jobs and manually added private jobs coexist together in `jobs.db`.")
-
-# ------------------------------------------------------------------
-# MAIN HEADER
-# ------------------------------------------------------------------
-st.title("💼 Gujarat Job Bridge")
-st.caption("Single-Window Portal for Government Notifications & Local Opportunities in Gujarat")
-st.divider()
-
-if not os.path.exists(DB_PATH):
-    st.warning("⚠️ `jobs.db` not found. Click **'Sync Latest OJAS Jobs'** in the sidebar to initialize your job database!")
-    st.stop()
-
-# ------------------------------------------------------------------
-# SEARCH & FILTERS
-# ------------------------------------------------------------------
-col1, col2 = st.columns([3, 1])
-with col1:
-    search_term = st.text_input("🔍 Search jobs (e.g., Clerk, GSSSB, Gandhinagar, અમદાવાદ)...")
-with col2:
-    source_choice = st.selectbox("Filter Source", ["All", "OJAS", "Private"])
-
-# TABS NAVIGATION
-tab1, tab2, tab3 = st.tabs([
-    "🏛️ Government Job Notices", 
-    "💼 Private & Walk-in Opportunities", 
-    "➕ Post Private Job (Admin)"
+# Top Navigation Tabs
+tab_jobs, tab_exams, tab_admin = st.tabs([
+    "💼 Live Vacancies", 
+    "📢 Exam Notifications & Answer Keys", 
+    "⚙️ Admin Portal"
 ])
 
-# ------------------------------------------------------------------
-# CARD RENDERER
-# ------------------------------------------------------------------
-def render_job_cards(df):
-    if df is None or df.empty:
-        st.info("No matching job listings found in database.")
-        return
-
-    st.write(f"Showing **{len(df)}** active listings:")
-    st.write("")
+# =========================================================
+# TAB 1: LIVE JOB VACANCIES
+# =========================================================
+with tab_jobs:
+    df = load_jobs_df()
     
-    for idx, row in df.iterrows():
-        with st.container():
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                title = str(row.get('title', 'Job Notice'))
-                dept = str(row.get('department', 'Organization'))
-                loc = str(row.get('location', 'Gujarat'))
-                advt = str(row.get('advt_no', 'N/A'))
-                
-                st.subheader(title)
-                st.write(f"🏢 **Organization:** {dept}")
-                st.write(f"📍 **Location:** {loc} | 📄 **Ref/Advt No:** {advt}")
-            with c2:
-                last_d = str(row.get('last_date', 'Check Notice'))
-                st.metric(label="Last Date to Apply", value=last_d)
-                
-                target_url = str(row.get('apply_url', 'https://ojas.gujarat.gov.in'))
-                if not target_url or target_url == "None":
-                    target_url = "https://ojas.gujarat.gov.in"
-                
-                st.link_button("View & Apply ➡️", target_url, use_container_width=True)
-                
-                wa_message = f"Check out this job opening: {title} ({dept}). Apply here: {target_url}"
-                encoded_msg = urllib.parse.quote(wa_message)
-                wa_url = f"https://api.whatsapp.com/send?text={encoded_msg}"
-                st.link_button("📲 Share on WhatsApp", wa_url, use_container_width=True)
-                
-            st.divider()
-
-# TAB 1: GOVERNMENT JOBS
-with tab1:
-    df_govt = fetch_jobs_df(search_query=search_term, source_filter="OJAS" if source_choice == "All" else source_choice)
-    render_job_cards(df_govt)
-
-# TAB 2: PRIVATE JOBS
-with tab2:
-    df_private = fetch_jobs_df(search_query=search_term, source_filter="Private")
-    render_job_cards(df_private)
-
-# TAB 3: ADMIN JOB POSTING FORM
-with tab3:
-    st.subheader("📝 Post a Local / Private Job Vacancy")
-    st.write("Use this form to add private sector hiring notices, walk-in interview details, or local business vacancies.")
+    # Filter Sidebar
+    st.sidebar.header("🔍 Filter Vacancies")
     
-    with st.form("admin_job_form", clear_on_submit=True):
-        f_title = st.text_input("Job Title*", placeholder="e.g. Accountant, Site Engineer, Sales Executive")
+    sources = ["All"] + list(df["source"].unique()) if not df.empty else ["All"]
+    selected_source = st.sidebar.selectbox("Filter Source", sources)
+    
+    search_query = st.sidebar.text_input("Search Job Title / Dept", "")
+    
+    filtered_df = df.copy()
+    if selected_source != "All":
+        filtered_df = filtered_df[filtered_df["source"] == selected_source]
         
-        col_a, col_b = st.columns(2)
-        with col_a:
-            f_company = st.text_input("Company / Employer Name*", placeholder="e.g. Sunrise Solar Pvt Ltd")
-            f_location = st.text_input("Location*", placeholder="e.g. Dahod / Ahmedabad / Remote")
-        with col_b:
-            f_last_date = st.text_input("Last Date to Apply*", placeholder="e.g. 15-09-2026 or Walk-in Daily")
-            f_advt_no = st.text_input("Reference / Advt No (Optional)", value="LOCAL-WALKIN")
-            
-        f_apply_url = st.text_input("Apply Link or Contact URL*", placeholder="e.g. https://company.com/careers or https://wa.me/919999999999")
+    if search_query:
+        filtered_df = filtered_df[
+            filtered_df["title"].str.contains(search_query, case=False, na=False) |
+            filtered_df["department"].str.contains(search_query, case=False, na=False)
+        ]
         
-        submitted = st.form_submit_button("🚀 Publish Vacancy", use_container_width=True)
+    # Metrics Summary
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Active Jobs", len(df))
+    m2.metric("OJAS Listings", len(df[df["source"] == "OJAS"]) if not df.empty else 0)
+    m3.metric("GPSC Listings", len(df[df["source"] == "GPSC"]) if not df.empty else 0)
+    
+    st.divider()
+    
+    # Jobs Display Table
+    if filtered_df.empty:
+        st.info("No job listings found matching your search criteria.")
+    else:
+        st.dataframe(
+            filtered_df[["source", "advt_no", "title", "department", "last_date", "apply_url"]],
+            column_config={
+                "source": "Source",
+                "advt_no": "Advt No.",
+                "title": "Job Designation",
+                "department": "Department / Board",
+                "last_date": "Last Date to Apply",
+                "apply_url": st.column_config.LinkColumn("Apply Link", display_text="Apply Now 🔗")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+
+# =========================================================
+# TAB 2: EXAM NOTIFICATIONS & ANSWER KEYS
+# =========================================================
+with tab_exams:
+    st.header("📢 Candidate Resource Hub")
+    st.write("Direct access to official Exam Schedules, Hall Tickets (Call Letters), Provisional/Final Answer Keys, and Results.")
+    
+    # Direct Official Action Bar
+    st.subheader("⚡ Quick Official Launchers")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.link_button("🎟️ OJAS Call Letters", "https://ojas.gujarat.gov.in/PrintCallLetter.aspx?opt=MAIN", use_container_width=True)
+    with col2:
+        st.link_button("🏛️ GPSC Answer Keys", "https://gpsc.gujarat.gov.in/AnswerKey?opt=MAIN", use_container_width=True)
+    with col3:
+        st.link_button("📜 GSSSB Official Updates", "https://gsssb.gujarat.gov.in/News.htm", use_container_width=True)
+    with col4:
+        st.link_button("🔍 Check OJAS Results", "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", use_container_width=True)
+        
+    st.divider()
+    
+    # Board-Specific Resource Sections
+    board_choice = st.radio("Select Recruitment Board", ["All Boards", "GSSSB (Subordinate Services)", "GPSC (Public Service)", "OJAS Central Portal"], horizontal=True)
+    
+    # Section 1: GSSSB Updates
+    if board_choice in ["All Boards", "GSSSB (Subordinate Services)"]:
+        st.markdown("""
+        <div class="portal-card">
+            <h3>📑 GSSSB (Gujarat Subordinate Service Selection Board)</h3>
+            <p><strong>Common Exams:</strong> CCE (Combined Competitive Exam), Head Clerk, Senior Clerk, Police Sub-Inspector, Junior Clerk.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("##### 🔑 Answer Keys & Objections")
+            st.write("Submit OMR objections and view official provisional answer keys directly on GSSSB.")
+            st.link_button("Open GSSSB Answer Key Portal 🔗", "https://gsssb.gujarat.gov.in/")
+        with g2:
+            st.markdown("##### 🎫 Hall Ticket & CBRT Exam City")
+            st.write("Check Computer-Based Recruitment Test (CBRT) schedule and download call letters.")
+            st.link_button("Download GSSSB Call Letter 🔗", "https://ojas.gujarat.gov.in/PrintCallLetter.aspx?opt=MAIN")
+
+    # Section 2: GPSC Updates
+    if board_choice in ["All Boards", "GPSC (Public Service)"]:
+        st.markdown("""
+        <div class="portal-card" style="border-left-color: #388e3c;">
+            <h3>🏛️ GPSC (Gujarat Public Service Commission)</h3>
+            <p><strong>Common Exams:</strong> Class 1/2 Executive Officers, Chief Officer, STI, Dy.SO, Assistant Professor, RFO.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown("##### 📝 Question Papers & Key Objections")
+            st.write("Download Preliminary/Mains question papers and official suggestion form for answer keys.")
+            st.link_button("GPSC Exam Papers & Keys 🔗", "https://gpsc.gujarat.gov.in/")
+        with p2:
+            st.markdown("##### 📊 Final Results & Interview Schedules")
+            st.write("Check prelims qualifying marks, interview dates, and final recommendation lists.")
+            st.link_button("GPSC Results Portal 🔗", "https://gpsc-ojas.gujarat.gov.in/")
+
+    # Candidate Guide Box
+    st.info("💡 **Candidate Tip:** Always keep your **Confirmation Number** and **Date of Birth (DD/MM/YYYY)** handy when downloading Call Letters or submitting Answer Key objections on OJAS/GPSC portals.")
+
+# =========================================================
+# TAB 3: ADMIN PORTAL
+# =========================================================
+with tab_admin:
+    st.header("⚙️ Admin Management Portal")
+    st.write("Manually add local/private job postings to `jobs.db`.")
+    
+    with st.form("add_job_form", clear_on_submit=True):
+        f_source = st.selectbox("Job Source", ["Private", "Local Dahod", "Contractual", "OJAS Manual"])
+        f_advt = st.text_input("Advt / Reference No.", "PVT-2026-001")
+        f_title = st.text_input("Job Title / Designation", placeholder="e.g. Solar Installation Engineer")
+        f_dept = st.text_input("Company / Organization Name", placeholder="e.g. Dahod Solar Tech Pvt Ltd")
+        f_location = st.text_input("Job Location", "Gujarat")
+        f_date = st.text_input("Last Date to Apply", "31/12/2026")
+        f_url = st.text_input("Application / Contact URL", "https://")
+        
+        submitted = st.form_submit_button("➕ Save Job Posting")
         
         if submitted:
-            if not f_title or not f_company or not f_location or not f_last_date or not f_apply_url:
-                st.error("⚠️ Please fill in all required fields marked with *.")
+            if f_title and f_dept:
+                save_jobs([{
+                    "source": f_source,
+                    "advt_no": f_advt,
+                    "title": f_title,
+                    "department": f_dept,
+                    "location": f_location,
+                    "last_date": f_date,
+                    "apply_url": f_url
+                }])
+                st.success(f"✅ Successfully added '{f_title}' to jobs.db!")
+                st.rerun()
             else:
-                success = insert_private_job(
-                    title=f_title,
-                    company=f_company,
-                    location=f_location,
-                    last_date=f_last_date,
-                    apply_url=f_apply_url,
-                    advt_no=f_advt_no
-                )
-                if success:
-                    st.success(f"✅ Vacancy for '{f_title}' published successfully!")
-                    st.rerun()
+                st.error("Please fill in both Job Title and Company/Department name.")
