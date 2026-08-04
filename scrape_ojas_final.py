@@ -1,25 +1,33 @@
 import sys
-import time
+import socket
 import requests
+import urllib3
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 from database import init_db, save_jobs
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.stdout.reconfigure(encoding='utf-8')
+
+# Force IPv4 resolution
+old_getaddrinfo = socket.getaddrinfo
+def allowed_gai_family(*args, **kwargs):
+    return [r for r in old_getaddrinfo(*args, **kwargs) if r[0] == socket.AF_INET]
+socket.getaddrinfo = allowed_gai_family
+
+BASE_URL = "https://ojas.gujarat.gov.in"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,gu;q=0.8",
+    "Connection": "keep-alive"
 }
 
-def parse_job_tables(soup, dept_name="Government of Gujarat"):
-    """Utility function to extract job rows from HTML soup."""
+def parse_tables(soup, dept_name="OJAS General"):
     extracted = []
     tables = soup.find_all('table')
     for table in tables:
-        rows = table.find_all('tr')
-        for row in rows:
+        for row in table.find_all('tr'):
             cols = row.find_all('td')
             if len(cols) >= 2:
                 advt_no = cols[0].text.strip()
@@ -27,12 +35,12 @@ def parse_job_tables(soup, dept_name="Government of Gujarat"):
                 last_date = cols[2].text.strip() if len(cols) > 2 else "Check Notice"
                 
                 link_tag = row.find('a', href=True)
-                apply_url = "https://ojas.gujarat.gov.in"
+                apply_url = BASE_URL
                 if link_tag:
                     href = link_tag['href']
-                    apply_url = href if href.startswith('http') else f"https://ojas.gujarat.gov.in/{href.lstrip('/')}"
+                    apply_url = href if href.startswith('http') else f"{BASE_URL}/{href.lstrip('/')}"
 
-                if title and len(title) > 3 and "Advt" not in advt_no and "ONE TIME" not in title and "OTR" not in title:
+                if title and len(title) > 3 and "Advt" not in advt_no and "ONE TIME" not in title:
                     extracted.append({
                         "source": "OJAS",
                         "advt_no": advt_no,
@@ -44,133 +52,114 @@ def parse_job_tables(soup, dept_name="Government of Gujarat"):
                     })
     return extracted
 
-def scrape_via_http():
-    """Engine 1: Ultra-fast HTTP session scraping (Primary)."""
-    print("⚡ Engine 1: Initiating Direct HTTP WebForms Scraper...")
+def run_ojas_scraper():
+    print("==================================================")
+    print("🚀 OJAS DYNAMIC LINK HARVESTER SCRAPER")
+    print("==================================================\n")
+
     session = requests.Session()
     session.headers.update(HEADERS)
-    
-    url = "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a"
-    resp = session.get(url, timeout=15)
-    
-    if resp.status_code != 200:
-        raise Exception(f"HTTP response code {resp.status_code}")
-
-    soup = BeautifulSoup(resp.text, 'html.parser')
-    
-    # Parse ASP.NET Hidden Form Fields
-    viewstate = soup.find('input', {'id': '__VIEWSTATE'})
-    eventvalidation = soup.find('input', {'id': '__EVENTVALIDATION'})
-    dept_select = soup.find('select')
-    
-    if not dept_select:
-        raise Exception("Department dropdown not found in HTML response.")
-
-    options = dept_select.find_all('option')
-    total_depts = len(options)
-    print(f"📋 Found {total_depts} departments via HTTP Engine.\n")
-    
     all_jobs = []
+
+    print("🌐 Step 1: Navigating to OJAS Homepage & Harvester...")
+    try:
+        init_res = session.get(BASE_URL, timeout=15, verify=False)
+    except Exception as e:
+        print(f"❌ Connection error to root: {e}")
+        return []
+
+    if init_res.status_code != 200:
+        print(f"❌ Homepage HTTP {init_res.status_code}")
+        return []
+
+    root_soup = BeautifulSoup(init_res.text, 'html.parser')
     
-    # Check default page jobs first
-    default_jobs = parse_job_tables(soup, "General / All Departments")
-    all_jobs.extend(default_jobs)
+    # Extract the live AdvtList link dynamically from the menu navigation
+    advt_link_tag = root_soup.find('a', href=lambda h: h and 'AdvtList.aspx' in h)
+    
+    if advt_link_tag and advt_link_tag.get('href'):
+        href = advt_link_tag['href']
+        advt_url = href if href.startswith('http') else f"{BASE_URL}/{href.lstrip('/')}"
+        print(f"   └── Found dynamic advertisement endpoint: {advt_url}")
+    else:
+        advt_url = f"{BASE_URL}/AdvtList.aspx"
+        print(f"   └── Fallback advertisement endpoint: {advt_url}")
 
-    # Postback to each department in session
-    for idx in range(1, min(total_depts, 15)):  # Top active departments
-        dept_val = options[idx].get('value', '')
-        dept_name = options[idx].text.strip()
-        
-        if not dept_val or "Select" in dept_name or "---" in dept_name:
-            continue
+    print("🌐 Step 2: Requesting Advertisement List Page...")
+    session.headers.update({"Referer": BASE_URL})
+    
+    try:
+        res = session.get(advt_url, timeout=20, verify=False)
+    except Exception as e:
+        print(f"❌ Request failed: {e}")
+        return []
 
-        print(f"[{idx}/{total_depts-1}] Querying Department: {dept_name}...")
-        
+    soup = BeautifulSoup(res.text, 'html.parser')
+    page_title = soup.title.string.strip() if soup.title else "No Title"
+    print(f"   └── Response Page Title: '{page_title}'")
+
+    select_elem = soup.find('select')
+    if not select_elem:
+        print(f"❌ HTML Diagnostics: Page returned title '{page_title}' without <select> controls.")
+        with open("ojas_err.html", "w", encoding="utf-8") as f:
+            f.write(res.text)
+        return []
+
+    select_name = select_elem.get('name') or select_elem.get('id')
+    options = select_elem.find_all('option')
+    
+    valid_options = []
+    for opt in options:
+        val = opt.get('value', '').strip()
+        txt = opt.text.strip()
+        if val and val not in ['0', '-1'] and "Select" not in txt and "---" not in txt:
+            valid_options.append((val, txt))
+
+    print(f"📋 Step 3: Extracted {len(valid_options)} department categories.\n")
+
+    for idx, (val, dept_name) in enumerate(valid_options):
+        print(f"[{idx+1}/{len(valid_options)}] Querying: {dept_name} (Val: {val})...")
+
         form_data = {
-            '__VIEWSTATE': viewstate['value'] if viewstate else '',
-            '__EVENTVALIDATION': eventvalidation['value'] if eventvalidation else '',
-            '__EVENTTARGET': dept_select.get('name', 'ddlDept'),
-            dept_select.get('name', 'ddlDept'): dept_val
+            hidden.get('name'): hidden.get('value', '')
+            for hidden in soup.find_all('input', type='hidden')
+            if hidden.get('name')
         }
-        
+
+        form_data['__EVENTTARGET'] = select_name
+        form_data['__EVENTARGUMENT'] = ''
+        form_data[select_name] = val
+
+        session.headers.update({"Referer": advt_url})
+
         try:
-            post_resp = session.post(url, data=form_data, timeout=10)
-            if post_resp.status_code == 200:
-                post_soup = BeautifulSoup(post_resp.text, 'html.parser')
-                dept_jobs = parse_job_tables(post_soup, dept_name)
-                all_jobs.extend(dept_jobs)
-                print(f"   └── Found {len(dept_jobs)} vacancy(ies)")
-        except Exception as e:
-            print(f"   ⚠️ Dept query skipped: {e}")
+            post_res = session.post(advt_url, data=form_data, timeout=15, verify=False)
+            if post_res.status_code == 200:
+                soup = BeautifulSoup(post_res.text, 'html.parser')
+                dept_jobs = parse_tables(soup, dept_name)
+                
+                if dept_jobs:
+                    print(f"   └── ✅ Found {len(dept_jobs)} active vacancy(ies)!")
+                    all_jobs.extend(dept_jobs)
+                else:
+                    print("   └── No active vacancies listed.")
+            else:
+                print(f"   └── ⚠️ HTTP {post_res.status_code} on postback.")
+        except Exception as err:
+            print(f"   └── ⚠️ Request failed: {err}")
 
     return all_jobs
 
-def scrape_via_playwright():
-    """Engine 2: Headless Playwright Fallback (Secondary)."""
-    print("\n🎭 Engine 2: Fallback to Headless Playwright Browser...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
-        )
-        context = browser.new_context(user_agent=HEADERS["User-Agent"])
-        page = context.new_page()
-        
-        target_url = "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a"
-        page.goto(target_url, wait_until="commit", timeout=30000)
-        page.wait_for_timeout(3000)
-        
-        select_locator = page.locator("select[name*='Dept'], select[id*='Dept'], select").first
-        if select_locator.count() == 0:
-            browser.close()
-            return []
-
-        options = select_locator.locator("option").all_inner_texts()
-        total_depts = len(options)
-        scraped_jobs = []
-
-        for idx in range(1, total_depts):
-            dept_name = options[idx].strip()
-            if not dept_name or "Select" in dept_name or "---" in dept_name:
-                continue
-                
-            try:
-                select_locator.select_option(index=idx)
-                page.wait_for_timeout(2000)
-                soup = BeautifulSoup(page.content(), 'html.parser')
-                dept_jobs = parse_job_tables(soup, dept_name)
-                scraped_jobs.extend(dept_jobs)
-            except Exception:
-                continue
-
-        browser.close()
-        return scraped_jobs
-
-def scrape_ojas_live_advertisements():
+def main():
     init_db()
+    jobs = run_ojas_scraper()
     
-    print("==================================================")
-    print("🚀 OJAS SILENT DUAL-ENGINE SCRAPER")
-    print("==================================================\n")
-    
-    scraped_jobs = []
-    
-    # Try Fast Engine First
-    try:
-        scraped_jobs = scrape_via_http()
-    except Exception as http_err:
-        print(f"⚠️ Engine 1 Notice: {http_err}. Switching to Engine 2...")
-        try:
-            scraped_jobs = scrape_via_playwright()
-        except Exception as pw_err:
-            print(f"❌ Engine 2 Failure: {pw_err}")
-
     print("\n==================================================")
-    print(f"✅ SUCCESS: Extracted {len(scraped_jobs)} total OJAS advertisements!")
+    print(f"✅ Extracted {len(jobs)} total OJAS advertisements!")
     print("==================================================\n")
 
-    if scraped_jobs:
-        save_jobs(scraped_jobs)
+    if jobs:
+        save_jobs(jobs)
 
 if __name__ == "__main__":
-    scrape_ojas_live_advertisements()
+    main()
