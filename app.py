@@ -86,7 +86,7 @@ with tab_jobs:
             filtered_df["department"].str.contains(search_query, case=False, na=False)
         ]
         
-    # Metrics Summary across all 4 sources
+    # Metrics Summary across all sources
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total Active Jobs", len(df))
     m2.metric("OJAS State", len(df[df["source"] == "OJAS"]) if not df.empty else 0)
@@ -111,7 +111,7 @@ with tab_jobs:
                 "apply_url": st.column_config.LinkColumn("Apply Link", display_text="Apply Now 🔗")
             },
             hide_index=True,
-            use_container_width=True
+            width="stretch"
         )
 
 # =========================================================
@@ -126,13 +126,13 @@ with tab_exams:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.link_button("🎟️ OJAS Call Letters", "https://ojas.gujarat.gov.in/PrintCallLetter.aspx?opt=MAIN", use_container_width=True)
+        st.link_button("🎟️ OJAS Call Letters", "https://ojas.gujarat.gov.in/PrintCallLetter.aspx?opt=MAIN", width="stretch")
     with col2:
-        st.link_button("🏛️ GPSC Answer Keys", "https://gpsc.gujarat.gov.in/AnswerKey?opt=MAIN", use_container_width=True)
+        st.link_button("🏛️ GPSC Answer Keys", "https://gpsc.gujarat.gov.in/AnswerKey?opt=MAIN", width="stretch")
     with col3:
-        st.link_button("📜 GSSSB Official Updates", "https://gsssb.gujarat.gov.in/News.htm", use_container_width=True)
+        st.link_button("📜 GSSSB Official Updates", "https://gsssb.gujarat.gov.in/News.htm", width="stretch")
     with col4:
-        st.link_button("🔍 Check OJAS Results", "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", use_container_width=True)
+        st.link_button("🔍 Check OJAS Results", "https://ojas.gujarat.gov.in/AdvtList.aspx?type=l9A312A22a", width="stretch")
         
     st.divider()
     
